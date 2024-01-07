@@ -7,7 +7,8 @@ from os.path import expanduser
 import urllib.parse, urllib.request
 from datetime import datetime, timedelta
 import pytimeparse
-import wget
+import io
+import PIL.Image as Image
 
 PYTHON3 = (sys.version_info.major > 2)
 if not PYTHON3 :
@@ -50,7 +51,7 @@ def post_request(url, params=None, timeout=10):
         if "access_token" in params:
             req.add_header("Authorization", f'Bearer {params.pop("access_token")}')
         params = urllib.parse.urlencode(params).encode('utf-8')
-        resp = urllib.request.urlopen(req, params, timeout=timeout) if params else urllib.request.urlopen(req, timeout=timeout)
+    resp = urllib.request.urlopen(req, params, timeout=timeout) if params else urllib.request.urlopen(req, timeout=timeout)
 
     for buff in iter(lambda: resp.read(65535), b''):
         data += buff
@@ -204,15 +205,34 @@ class ModulesEvents():
         for event in self.get_events_from_type(module_type):
             if event['time'] > since_timestamp:
                 for subevent in event['subevents']:
-                    snapshots_url.append(subevent['snapshot'].get('url', None))
+                    url = subevent['snapshot'].get('url', None)
+                    if url:
+                        snapshots_url.append(url)
 
         return snapshots_url
 
+from PIL import Image
+from ultralytics import YOLO
+import wget
 
 if __name__ == "__main__":
+
+    # Init Netatmo Requests Objects
     auth = ClientAuth()
     home_id = HomesData(auth).get_homes_id(name='Kergal')
     status = HomeStatus(auth, home_id)
     events = ModulesEvents(auth, home_id)
+
+    # Retrieve Snapshots
     noc_events_url = events.get_snapshots_url()
-    wget.download(noc_events_url[0], 'event1.jpg')
+    jpeg_image = post_request(noc_events_url[3])
+    image = Image.open(io.BytesIO(jpeg_image))
+
+    # Prediction
+    model = YOLO('yolov8n.pt')
+    results = model.predict(image)
+    for r in results[0]:
+        im_array = r.plot()
+        im = Image.fromarray(im_array[..., ::-1])
+        im.show()
+        im.save('results.jpg')
