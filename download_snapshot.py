@@ -230,9 +230,5 @@ if __name__ == "__main__":
 
     # Prediction
     model = YOLO('yolov8n.pt')
-    results = model.predict(image)
-    for r in results[0]:
-        im_array = r.plot()
-        im = Image.fromarray(im_array[..., ::-1])
-        im.show()
-        im.save('results.jpg')
+    results = model.predict(image, classes=0)[0]
+    results.save_crop(save_dir='.')
