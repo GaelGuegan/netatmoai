@@ -6,8 +6,9 @@ from os import getenv
 from os.path import expanduser
 import urllib.parse, urllib.request
 from datetime import datetime, timedelta
-import pytimeparse
 import io
+import pytimeparse
+from ultralytics import YOLO
 import PIL.Image as Image
 
 PYTHON3 = (sys.version_info.major > 2)
@@ -51,7 +52,9 @@ def post_request(url, params=None, timeout=10):
         if "access_token" in params:
             req.add_header("Authorization", f'Bearer {params.pop("access_token")}')
         params = urllib.parse.urlencode(params).encode('utf-8')
-    resp = urllib.request.urlopen(req, params, timeout=timeout) if params else urllib.request.urlopen(req, timeout=timeout)
+        resp = urllib.request.urlopen(req, params, timeout=timeout)
+    else:
+        resp = urllib.request.urlopen(req, timeout=timeout)
 
     for buff in iter(lambda: resp.read(65535), b''):
         data += buff
@@ -171,15 +174,19 @@ class ModulesEvents():
     """
     _URL_GET_EVENTS = _URL_BASE + 'api/getevents'
 
-    def __init__(self, auth_data, home_id):
+    def __init__(self, auth_data, home_id, size=100):
+        self.raw_data = []
         post_params = {
             "access_token" : auth_data.access_token,
-            "home_id": home_id
+            "home_id": home_id,
+            "size": size
         }
         self.auth_data = auth_data
         self.home_id = home_id
-        self.resp = post_request(self._URL_GET_EVENTS, post_params)
-        self.raw_data = self.resp['body']['home']['events']
+        self.size = size
+        resp = post_request(self._URL_GET_EVENTS, post_params)
+        self.raw_data = resp['body']['home']['events']
+
         if not self.raw_data:
             # pylint: disable-next=broad-exception-raised
             raise Exception('No home found')
@@ -190,10 +197,10 @@ class ModulesEvents():
         post_params = {
             "access_token" : self.auth_data.access_token,
             "home_id": self.home_id,
-            "device_types": module_type
+            "device_types": module_type,
+            "size": self.size
         }
-        self.resp = post_request(self._URL_GET_EVENTS, post_params)
-        return self.resp['body']['home']['events']
+        return post_request(self._URL_GET_EVENTS, post_params)['body']['home']['events']
 
     def get_snapshots_url(self, module_type='NOC', since='1 day'):
         """ Get Snapshots URL
@@ -204,16 +211,12 @@ class ModulesEvents():
 
         for event in self.get_events_from_type(module_type):
             if event['time'] > since_timestamp:
-                for subevent in event['subevents']:
+                for subevent in event.get('subevents', []):
                     url = subevent['snapshot'].get('url', None)
                     if url:
                         snapshots_url.append(url)
 
         return snapshots_url
-
-from PIL import Image
-from ultralytics import YOLO
-import wget
 
 if __name__ == "__main__":
 
@@ -223,12 +226,18 @@ if __name__ == "__main__":
     status = HomeStatus(auth, home_id)
     events = ModulesEvents(auth, home_id)
 
-    # Retrieve Snapshots
-    noc_events_url = events.get_snapshots_url()
-    jpeg_image = post_request(noc_events_url[3])
-    image = Image.open(io.BytesIO(jpeg_image))
+    yolo_model = YOLO('yolov8n.pt')
+    yolo_model_names = {v: k for k, v in yolo_model.model.names.items()}
+    logging.warning('Model yolov8n.pt can detect the following object: %s', yolo_model.model.names)
 
-    # Prediction
-    model = YOLO('yolov8n.pt')
-    results = model.predict(image, classes=0)[0]
-    results.save_crop(save_dir='.')
+    # Retrieve URL Snapshots
+    noc_events_url = events.get_snapshots_url(since='1 day')
+    for url in noc_events_url:
+
+        # Download snapshot
+        jpeg_image = post_request(url)
+        image = Image.open(io.BytesIO(jpeg_image))
+
+        # Save prediction
+        results = yolo_model.predict(image, classes=yolo_model_names['person'], verbose=False)[0]
+        results.save_crop(save_dir='.', file_name=url)
