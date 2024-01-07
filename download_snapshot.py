@@ -1,11 +1,17 @@
 import time
 import logging
-import urllib.parse, urllib.request
+import json
+import sys
 from os import getenv
 from os.path import expanduser
-import json
-import requests
+import urllib.parse, urllib.request
+from datetime import datetime, timedelta
+import pytimeparse
 import wget
+
+PYTHON3 = (sys.version_info.major > 2)
+if not PYTHON3 :
+    raise Exception('Python version need to be > 3 (current = {sys.version}')
 
 ######################## AUTHENTICATION INFORMATION ######################
 # To be able to have a program accessing your netatmo data, you have to register your program as
@@ -30,7 +36,6 @@ _CLIENT_SECRET = getParameter("CLIENT_SECRET", cred)
 _REFRESH_TOKEN = getParameter("REFRESH_TOKEN", cred)
 
 _URL_BASE = 'https://api.netatmo.com/'
-_URL_GET_EVENTS = _URL_BASE + 'getevents'
 
 
 def post_request(url, params=None, timeout=10):
@@ -83,7 +88,8 @@ class ClientAuth:
     @property
     def access_token(self):
         ''' Access token '''
-        if self.expiration < time.time() : self.renew_token()
+        if self.expiration < time.time() :
+            self.renew_token()
         return self._access_token
 
     def renew_token(self):
@@ -103,6 +109,7 @@ class ClientAuth:
         self._access_token = resp['access_token']
         self.expiration = int(resp['expire_in'] + time.time())
 
+
 class HomeStatus:
     """
         Class managing general status of home devices
@@ -111,9 +118,9 @@ class HomeStatus:
 
     def __init__(self, auth_data, home_id):
         post_params = {
-                "access_token" : auth_data.access_token,
-                "home_id": home_id
-                }
+            "access_token" : auth_data.access_token,
+            "home_id": home_id
+        }
         self.resp = post_request(self._URL_HOME_STATUS, post_params)
         self.raw_data = self.resp['body']['home']
         if not self.raw_data:
@@ -141,8 +148,8 @@ class HomesData:
 
     def __init__(self, auth_data):
         post_params = {
-                "access_token" : auth_data.access_token,
-                }
+            "access_token" : auth_data.access_token,
+        }
         self.resp = post_request(self._URL_HOMES_DATA, post_params)
         self.raw_data = self.resp['body']['homes']
         if not self.raw_data:
@@ -157,21 +164,55 @@ class HomesData:
         # return only modules with correspond type
         return [home['id'] for home in self.raw_data if home['name'] == name][0]
 
-# Save Image from NOC events to dist
-def download_snapshot(number=1, mac="70:ee:50:95:d5:1c"):
-    """ Download snapshot from events
-    """
-    events = requests.get(_URL_GET_EVENTS + "?home_id=" + home_id + "&size=" + str(number), headers=headers)
-    events = json.loads(events.content)
 
-    for event in events["body"]["home"]["events"]:
-        if event["module_id"] == mac:
-            url = event["subevents"][0]["snapshot"]["url"]
-            wget.download(url)
+class ModulesEvents():
+    """ Get last modules events
+    """
+    _URL_GET_EVENTS = _URL_BASE + 'api/getevents'
+
+    def __init__(self, auth_data, home_id):
+        post_params = {
+            "access_token" : auth_data.access_token,
+            "home_id": home_id
+        }
+        self.auth_data = auth_data
+        self.home_id = home_id
+        self.resp = post_request(self._URL_GET_EVENTS, post_params)
+        self.raw_data = self.resp['body']['home']['events']
+        if not self.raw_data:
+            # pylint: disable-next=broad-exception-raised
+            raise Exception('No home found')
+
+    def get_events_from_type(self, module_type='NOC'):
+        """ Get events from a type
+        """
+        post_params = {
+            "access_token" : self.auth_data.access_token,
+            "home_id": self.home_id,
+            "device_types": module_type
+        }
+        self.resp = post_request(self._URL_GET_EVENTS, post_params)
+        return self.resp['body']['home']['events']
+
+    def get_snapshots_url(self, module_type='NOC', since='1 day'):
+        """ Get Snapshots URL
+        """
+        since_timestamp = pytimeparse.parse(since)
+        since_timestamp = (datetime.now() - timedelta(seconds=since_timestamp)).timestamp()
+        snapshots_url = []
+
+        for event in self.get_events_from_type(module_type):
+            if event['time'] > since_timestamp:
+                for subevent in event['subevents']:
+                    snapshots_url.append(subevent['snapshot'].get('url', None))
+
+        return snapshots_url
 
 
 if __name__ == "__main__":
     auth = ClientAuth()
     home_id = HomesData(auth).get_homes_id(name='Kergal')
     status = HomeStatus(auth, home_id)
-    print(status.raw_data)
+    events = ModulesEvents(auth, home_id)
+    noc_events_url = events.get_snapshots_url()
+    wget.download(noc_events_url[0], 'event1.jpg')
