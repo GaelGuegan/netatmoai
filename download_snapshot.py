@@ -231,8 +231,8 @@ if __name__ == "__main__":
     logging.warning('Model yolov8n.pt can detect the following object: %s', yolo_model.model.names)
 
     # Retrieve URL Snapshots
-    noc_events_url = events.get_snapshots_url(since='1 day')
-    for url in noc_events_url:
+    noc_events_url = events.get_snapshots_url(since='10 day')
+    for k, url in enumerate(noc_events_url):
 
         # Download snapshot
         jpeg_image = post_request(url)
@@ -240,4 +240,4 @@ if __name__ == "__main__":
 
         # Save prediction
         results = yolo_model.predict(image, classes=yolo_model_names['person'], verbose=False)[0]
-        results.save_crop(save_dir='.', file_name=url)
+        results.save_crop(save_dir='.', file_name="person\{:05d}.jpg".format(k))
