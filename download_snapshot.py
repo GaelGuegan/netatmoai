@@ -226,9 +226,6 @@ if __name__ == "__main__":
     status = HomeStatus(auth, home_id)
     events = ModulesEvents(auth, home_id)
 
-    # load model
-    model = YOLO('yolov8n.pt')
-
     yolo_model = YOLO('yolov8n.pt')
     yolo_model_names = {v: k for k, v in yolo_model.model.names.items()}
     logging.warning('Model yolov8n.pt can detect the following object: %s', yolo_model.model.names)
