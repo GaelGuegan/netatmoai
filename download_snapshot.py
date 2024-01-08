@@ -202,19 +202,22 @@ class ModulesEvents():
         }
         return post_request(self._URL_GET_EVENTS, post_params)['body']['home']['events']
 
-    def get_snapshots_url(self, module_type='NOC', since='1 day'):
-        """ Get Snapshots URL
+    def get_snapshots_url(self, module_type='NOC', since=None):
+        """ Get Snapshots URL in a JSON format: [{'timestamp': xxxx, 'url': xxxx}, {'timestamp': xxxx, 'url': xxxx}]
         """
-        since_timestamp = pytimeparse.parse(since)
-        since_timestamp = (datetime.now() - timedelta(seconds=since_timestamp)).timestamp()
         snapshots_url = []
+        since_timestamp = 0
+        if since:
+            since_timestamp = pytimeparse.parse(since)
+            since_timestamp = (datetime.now() - timedelta(seconds=since_timestamp)).timestamp()
 
         for event in self.get_events_from_type(module_type):
             if event['time'] > since_timestamp:
                 for subevent in event.get('subevents', []):
                     url = subevent['snapshot'].get('url', None)
+                    timestamp = subevent['time']
                     if url:
-                        snapshots_url.append(url)
+                        snapshots_url.append({'timestamp': timestamp, 'url': url})
 
         return snapshots_url
 
@@ -224,20 +227,21 @@ if __name__ == "__main__":
     auth = ClientAuth()
     home_id = HomesData(auth).get_homes_id(name='Kergal')
     status = HomeStatus(auth, home_id)
-    events = ModulesEvents(auth, home_id)
+    events = ModulesEvents(auth, home_id, size=50)
 
+    # Load predection model YOLO
     yolo_model = YOLO('yolov8n.pt')
     yolo_model_names = {v: k for k, v in yolo_model.model.names.items()}
     logging.warning('Model yolov8n.pt can detect the following object: %s', yolo_model.model.names)
 
     # Retrieve URL Snapshots
-    noc_events_url = events.get_snapshots_url(since='1 day')
+    noc_events_url = events.get_snapshots_url()
     for url in noc_events_url:
 
         # Download snapshot
-        jpeg_image = post_request(url)
+        jpeg_image = post_request(url['url'])
         image = Image.open(io.BytesIO(jpeg_image))
 
         # Save prediction
         results = yolo_model.predict(image, classes=yolo_model_names['person'], verbose=False)[0]
-        results.save_crop(save_dir='.', file_name=url)
+        results.save_crop(save_dir='.', file_name=str(url['timestamp']))
