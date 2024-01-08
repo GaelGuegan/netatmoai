@@ -174,7 +174,8 @@ class ModulesEvents():
     def __init__(self, auth_data, home_id):
         post_params = {
             "access_token" : auth_data.access_token,
-            "home_id": home_id
+            "home_id": home_id,
+            "size": 500
         }
         self.auth_data = auth_data
         self.home_id = home_id
@@ -223,12 +224,16 @@ if __name__ == "__main__":
     status = HomeStatus(auth, home_id)
     events = ModulesEvents(auth, home_id)
 
-    # Retrieve Snapshots
-    noc_events_url = events.get_snapshots_url()
-    jpeg_image = post_request(noc_events_url[3])
-    image = Image.open(io.BytesIO(jpeg_image))
-
-    # Prediction
+    # load model
     model = YOLO('yolov8n.pt')
-    results = model.predict(image, classes=0)[0]
-    results.save_crop(save_dir='.')
+
+    # Retrieve Snapshots
+    noc_events_url = events.get_snapshots_url(since="20 days") 
+    for k, event in enumerate(noc_events_url):
+        jpeg_image = post_request(event)
+        image = Image.open(io.BytesIO(jpeg_image))
+
+        # Prediction
+        results = model.predict(image, classes=0, verbose=False)[0]
+        results.save_crop(save_dir='.', file_name='person/{:05d}.jpg'.format(k))
+
