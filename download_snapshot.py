@@ -174,7 +174,7 @@ class ModulesEvents():
     """
     _URL_GET_EVENTS = _URL_BASE + 'api/getevents'
 
-    def __init__(self, auth_data, home_id, size=100):
+    def __init__(self, auth_data, home_id, size=300):
         self.raw_data = []
         post_params = {
             "access_token" : auth_data.access_token,
@@ -202,17 +202,28 @@ class ModulesEvents():
         }
         return post_request(self._URL_GET_EVENTS, post_params)['body']['home']['events']
 
-    def get_snapshots_url(self, module_type='NOC', since=None):
-        """ Get Snapshots URL in a JSON format: [{'timestamp': xxxx, 'url': xxxx}, {'timestamp': xxxx, 'url': xxxx}]
+    def get_snapshots_url(self, module_type='NOC', since=None, _from=None, to=None):
+        """ Get Snapshots URL in a JSON format:
+        [{'timestamp': xxxx, 'url': xxxx}, {'timestamp': xxxx, 'url': xxxx}]
         """
         snapshots_url = []
-        since_timestamp = 0
+        since_timestamp = sys.maxsize
+
         if since:
             since_timestamp = pytimeparse.parse(since)
             since_timestamp = (datetime.now() - timedelta(seconds=since_timestamp)).timestamp()
+            _from = None
+            to = None
+
+        if _from:
+            from_timestamp = datetime.fromisoformat(_from).timestamp()
+        if to:
+            to_timestamp = datetime.fromisoformat(to).timestamp()
+        if to_timestamp < from_timestamp:
+            raise AssertionError(f'from date ({_from}) cannot be greater than to date ({to})')
 
         for event in self.get_events_from_type(module_type):
-            if event['time'] > since_timestamp:
+            if event['time'] > since_timestamp or to_timestamp > event['time'] > from_timestamp:
                 for subevent in event.get('subevents', []):
                     url = subevent['snapshot'].get('url', None)
                     timestamp = subevent['time']
@@ -227,7 +238,7 @@ if __name__ == "__main__":
     auth = ClientAuth()
     home_id = HomesData(auth).get_homes_id(name='Kergal')
     status = HomeStatus(auth, home_id)
-    events = ModulesEvents(auth, home_id, size=50)
+    events = ModulesEvents(auth, home_id, size=300)
 
     # Load predection model YOLO
     yolo_model = YOLO('yolov8n.pt')
@@ -235,13 +246,14 @@ if __name__ == "__main__":
     logging.warning('Model yolov8n.pt can detect the following object: %s', yolo_model.model.names)
 
     # Retrieve URL Snapshots
-    noc_events_url = events.get_snapshots_url()
+    noc_events_url = events.get_snapshots_url(_from='2023-12-15', to='2024-01-05')
     for url in noc_events_url:
-
-        # Download snapshot
+        # Download snapshot in RAM
         jpeg_image = post_request(url['url'])
         image = Image.open(io.BytesIO(jpeg_image))
 
-        # Save prediction
+        # Save prediction in File
         results = yolo_model.predict(image, classes=yolo_model_names['person'], verbose=False)[0]
-        results.save_crop(save_dir='.', file_name=str(url['timestamp']))
+        filename_time = datetime.fromtimestamp(url['timestamp'])
+        filename_time = filename_time.strftime('%Y%m%d_%Hh%Mm%Ss')
+        results.save_crop(save_dir='.', file_name=filename_time)
